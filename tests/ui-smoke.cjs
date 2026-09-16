@@ -27,6 +27,7 @@ const root = path.resolve(__dirname, '..');
  await page.addScriptTag({path:root+'/sidepanel.js'});
  await page.evaluate(()=>{
   currentVideoId='video123';currentVideoTitle='GPU lesson';currentChannelName='Test';
+  document.getElementById('videoTitle').textContent=currentVideoTitle;document.getElementById('videoChannel').textContent=currentChannelName;document.getElementById('videoInfo').style.display='block';
   currentTranscript=Array.from({length:12},(_,i)=>({start:i*40,duration:0,text:`Paragraph ${i}: We use GPUs for training and this paragraph gives a complete explanation of their role in computing.`}));
   setupEventListeners();renderTranscript();setupExplainFeature();showState('results');
  });

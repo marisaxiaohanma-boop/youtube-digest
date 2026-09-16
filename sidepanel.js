@@ -493,6 +493,10 @@ async function checkCurrentTab() {
 
     if (videoId) {
       currentVideoUrl = tab.url;
+      // Extension reloads can temporarily disconnect the content script.
+      // The tab title remains available while its metadata reconnects.
+      currentVideoTitle = (tab.title || "").replace(/ - YouTube$/, "").trim();
+      currentChannelName = "";
 
       try {
         // Route through background script for reliable message passing
@@ -502,14 +506,14 @@ async function checkCurrentTab() {
         });
         debugLog("[YouTube Digest Panel] getVideoInfo result:", result);
         if (result.success && result.response) {
-          currentVideoTitle = result.response.title || "";
+          currentVideoTitle = result.response.title || currentVideoTitle;
           currentChannelName = result.response.channelName || "";
           currentVideoDescription = result.response.description || "";
           currentVideoDuration = result.response.duration || 0;
         }
       } catch (e) {
         console.error("[YouTube Digest Panel] getVideoInfo error:", e);
-        currentVideoTitle = "";
+        // Keep the tab-title fallback when messaging is unavailable.
         currentChannelName = "";
         currentVideoDescription = "";
         currentVideoDuration = 0;
@@ -588,6 +592,8 @@ async function startDigest(videoId, videoUrl) {
     debugLog("Loading from cache:", videoId);
     currentVideoId = videoId;
     currentVideoUrl = videoUrl;
+    currentVideoTitle = currentVideoTitle || cached.videoTitle || "";
+    currentChannelName = currentChannelName || cached.channelName || "";
     currentAnalysis = cached.analysis || null;
     currentTranscript = cached.transcript;
     currentTranscriptText = cached.transcriptText;
