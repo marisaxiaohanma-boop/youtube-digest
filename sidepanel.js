@@ -2092,6 +2092,7 @@ async function loadNotes(videoId) {
       currentNotes = result.notes || [];
       currentNotesFilterVideoId = videoId;
       renderNotes(result.notes, videoId);
+      document.getElementById("undoNoteMerge").hidden = !result.canUndoMerge;
     }
   } catch (error) {
     console.error("[YouTube Digest Panel] Load notes error:", error);
@@ -2123,45 +2124,57 @@ function renderNotes(notes, filteredVideoId) {
     const translationId = getNoteTranslationId(note, index);
     const noteEl = document.createElement("div");
     noteEl.className = "note-item";
+    const canMerge = (neighbor) => neighbor && neighbor.videoId === note.videoId;
     noteEl.innerHTML = `
       <div class="note-header">
         <span class="note-timestamp" data-url="${escapeHtml(note.timestampedUrl)}" data-seconds="${Number(note.timestampSeconds) || 0}">${escapeHtml(note.timestamp)}</span>
         ${!filteredVideoId ? `<span class="note-video-title">${escapeHtml(note.videoTitle)}</span>` : ""}
+        <div class="note-merge-actions">
+          <button class="note-action-btn merge-up" aria-label="Merge with previous note" title="与上一条合并" ${canMerge(notes[index - 1]) ? "" : "disabled"}>↑</button>
+          <button class="note-action-btn merge-down" aria-label="Merge with next note" title="与下一条合并" ${canMerge(notes[index + 1]) ? "" : "disabled"}>↓</button>
+        </div>
       </div>
       <div class="note-text">${renderLocalizedContent(note.text, "notes", translationId)}</div>
-      <div class="note-thoughts">${note.thoughts ? `<strong>My thoughts</strong><br>${escapeHtml(note.thoughts)}` : ""}</div>
+      <div class="note-thoughts">${note.thoughts ? `<strong>Idea</strong><br>${escapeHtml(note.thoughts)}` : ""}</div>
       <div class="note-actions">
-        <button class="note-action-btn note-edit">Edit / My thoughts</button>
-        <button class="note-action-btn note-copy-text">Copy text</button>
-        <button class="note-action-btn note-copy-link" data-url="${escapeHtml(note.timestampedUrl)}">Copy timestamp</button>
-        <button class="note-action-btn note-play" data-seconds="${Number(note.timestampSeconds) || 0}">Play</button>
-        <button class="note-delete" data-id="${escapeHtml(note.id)}" type="button" aria-label="Delete note" title="Delete note">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 6h18"></path>
-            <path d="M8 6V4h8v2"></path>
-            <path d="m19 6-1 14H6L5 6"></path>
-            <path d="M10 11v5"></path>
-            <path d="M14 11v5"></path>
-          </svg>
-        </button>
+        <button class="note-action-btn note-play">Play</button>
+        <button class="note-action-btn note-copy-text">Copy</button>
+        <button class="note-action-btn note-edit">Edit</button>
+        <button class="note-action-btn note-idea">Idea</button>
       </div>
+      <p class="note-status" role="status"></p>
     `;
 
     noteEl.querySelector(".note-edit").addEventListener("click", () => openNoteEditor(noteEl, note, filteredVideoId));
+
+    noteEl.querySelector(".note-idea").addEventListener("click", () => openNoteEditor(noteEl, note, filteredVideoId, "thoughts"));
+    for (const [selector, neighbor] of [[".merge-up", notes[index - 1]], [".merge-down", notes[index + 1]]]) {
+      noteEl.querySelector(selector).addEventListener("click", async () => {
+        const status = noteEl.querySelector(".note-status");
+        if (document.querySelector(".note-editor")) {
+          status.textContent = "Save or cancel your edit before merging.";
+          return;
+        }
+        noteEl.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+        try {
+          const result = await chrome.runtime.sendMessage({ action: "mergeNotes", noteId: note.id, neighborId: neighbor.id, videoId: filteredVideoId });
+          if (!result?.success) throw new Error(result?.error || "Could not merge notes");
+          document.getElementById("undoNoteMerge").hidden = false;
+          document.getElementById("notesExportStatus").textContent = "Notes merged. You can undo the last merge.";
+          await loadNotes(filteredVideoId);
+        } catch (error) {
+          status.textContent = error.message;
+          noteEl.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+          noteEl.querySelector(".merge-up").disabled = !canMerge(notes[index - 1]);
+          noteEl.querySelector(".merge-down").disabled = !canMerge(notes[index + 1]);
+        }
+      });
+    }
 
     // Timestamp click - play from this point (in this tab or a new one)
     noteEl.querySelector(".note-timestamp").addEventListener("click", () => {
       playNote(note);
     });
-
-    // Delete button
-    noteEl
-      .querySelector(".note-delete")
-      .addEventListener("click", async (e) => {
-        e.stopPropagation();
-        await deleteNote(note.id);
-        loadNotes(filteredVideoId);
-      });
 
     // Copy text button — copies just the note's text
     noteEl
@@ -2174,23 +2187,7 @@ function renderNotes(notes, filteredVideoId) {
           const btn = noteEl.querySelector(".note-copy-text");
           btn.textContent = "Copied";
           setTimeout(() => {
-            btn.textContent = "Copy text";
-          }, 2000);
-        } catch (err) {
-          console.error("Copy failed:", err);
-        }
-      });
-
-    // Copy timestamp button — copies the timestamped YouTube link
-    noteEl
-      .querySelector(".note-copy-link")
-      .addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(note.timestampedUrl);
-          const btn = noteEl.querySelector(".note-copy-link");
-          btn.textContent = "Copied";
-          setTimeout(() => {
-            btn.textContent = "Copy timestamp";
+            btn.textContent = "Copy";
           }, 2000);
         } catch (err) {
           console.error("Copy failed:", err);
@@ -2946,12 +2943,13 @@ globalThis.__YTD_TRANSCRIPT_TESTING__ = {
 };
 
 
-function openNoteEditor(noteEl, note, filter) {
-  if (noteEl.querySelector(".note-editor")) return;
+function openNoteEditor(noteEl, note, filter, field = "text") {
+  const existing = noteEl.querySelector(".note-editor");
+  if (existing) { existing.elements[field].focus(); return; }
   const editor = document.createElement("form");
   editor.className = "note-editor";
   editor.innerHTML = `<label>Note<textarea name="text" rows="5" maxlength="30000" required></textarea></label>
-    <label>My thoughts / questions<textarea name="thoughts" rows="3" maxlength="30000" placeholder="Add your own thoughts…"></textarea></label>
+    <label>Idea<textarea name="thoughts" rows="3" maxlength="30000" placeholder="Add an idea or question…"></textarea></label>
     <button class="enhance-btn" type="submit">Save changes</button>
     <button class="enhance-btn" type="button">Cancel</button><p role="status"></p>`;
   editor.elements.text.value = note.text;
@@ -2975,13 +2973,13 @@ function openNoteEditor(noteEl, note, filter) {
     } finally { save.disabled = false; }
   };
   noteEl.appendChild(editor);
-  editor.elements.text.focus();
+  editor.elements[field].focus();
 }
 
 function notesToMarkdown(notes) {
   return "# YouTube Digest notes\n\n" + notes.map((note) =>
     `## ${note.videoTitle || "Untitled video"} — ${note.timestamp}\n\n${note.timestampedUrl}\n\n${note.text}` +
-    (note.thoughts ? `\n\n### My thoughts\n\n${note.thoughts}` : "")
+    (note.thoughts ? `\n\n### Idea\n\n${note.thoughts}` : "")
   ).join("\n\n---\n\n") + "\n";
 }
 
@@ -3068,4 +3066,19 @@ saveAnswerButton?.addEventListener("click", async () => {
     saveAnswerButton.hidden = true;
   } catch (error) { questionStatus.textContent = error.message; }
   finally { saveAnswerButton.disabled = false; }
+});
+
+
+document.getElementById("undoNoteMerge")?.addEventListener("click", async () => {
+  const button = document.getElementById("undoNoteMerge");
+  const status = document.getElementById("notesExportStatus");
+  if (document.querySelector(".note-editor")) { status.textContent = "Save or cancel your edit before undoing."; return; }
+  button.disabled = true;
+  try {
+    const result = await chrome.runtime.sendMessage({ action: "undoNoteMerge" });
+    if (!result?.success) throw new Error(result?.error || "Could not undo merge");
+    status.textContent = "Merge undone.";
+    await loadNotes(currentNotesFilterVideoId);
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
 });

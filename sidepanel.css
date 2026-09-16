@@ -1519,3 +1519,9 @@ body.has-transcript-results:has(.tab-panel[data-panel="transcript"].active) .tra
 .transcript-question-dock .follow-playback-btn { position: static; transform: none; margin: 0 auto 8px; }
 .transcript-question-dock .follow-playback-btn:hover { transform: translateY(-1px); }
 .content { min-height: 0; }
+
+.note-merge-actions { margin-left: auto; display: flex; gap: 5px; flex-shrink: 0; }
+.note-merge-actions button { min-width: 30px; padding: 3px 9px; }
+.note-merge-actions button:disabled { opacity: .3; cursor: default; }
+.note-status { font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+.note-text { white-space: pre-wrap; }

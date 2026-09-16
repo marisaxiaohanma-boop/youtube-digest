@@ -820,3 +820,49 @@ test("context Q&A sends the supplied context and question through the configured
   assert.deepEqual(body.thinking, { type: "disabled" });
   await assert.rejects(helpers.handleAskTranscript({ question: "GPU?", transcriptContext: "" }));
 });
+
+
+test("merge adjacent notes preserves text, ideas and earliest source, and undo restores both", async () => {
+  const h = loadBackgroundHelpers();
+  const first = (await h.handleSaveNote("video123", 10, "Video", "Channel", "Earlier quote")).note;
+  const second = (await h.handleSaveNote("video123", 20, "Video", "Channel", "Later quote")).note;
+  await h.handleUpdateNote(first.id, first.text, "Earlier idea");
+  await h.handleUpdateNote(second.id, second.text, "Later idea");
+  const before = JSON.stringify((await h.handleGetNotes(null)).notes);
+  await h.handleMergeNotes(second.id, first.id, "video123");
+  const result = await h.handleGetNotes(null);
+  assert.equal(result.notes.length, 1);
+  assert.equal(result.notes[0].text, "Earlier quote\n\nLater quote");
+  assert.equal(result.notes[0].thoughts, "Earlier idea\n\nLater idea");
+  assert.equal(result.notes[0].timestampSeconds, 10);
+  assert.equal(result.canUndoMerge, true);
+  await h.handleUndoNoteMerge();
+  assert.equal(JSON.stringify((await h.handleGetNotes(null)).notes), before);
+});
+
+test("merge rejects different videos, non-neighbors and stale requests", async () => {
+  const h = loadBackgroundHelpers();
+  const a = (await h.handleSaveNote("video123", 10, "Video", "", "A")).note;
+  const b = (await h.handleSaveNote("other123", 15, "Other", "", "B")).note;
+  const c = (await h.handleSaveNote("video123", 20, "Video", "", "C")).note;
+  await assert.rejects(h.handleMergeNotes(a.id, b.id, null), /same video/);
+  await assert.rejects(h.handleMergeNotes(a.id, c.id, null), /Notes changed/);
+  await h.handleMergeNotes(a.id, c.id, "video123");
+  await assert.rejects(h.handleMergeNotes(a.id, c.id, "video123"), /Notes changed/);
+  await h.handleUndoNoteMerge();
+  assert.deepEqual(JSON.parse(JSON.stringify((await h.handleGetNotes(null)).notes.map(n => n.text))), ["C", "B", "A"]);
+});
+
+test("undo preserves newer notes and refuses to overwrite edits", async () => {
+  const h = loadBackgroundHelpers();
+  const a = (await h.handleSaveNote("video123", 10, "Video", "", "A")).note;
+  const b = (await h.handleSaveNote("video123", 20, "Video", "", "B")).note;
+  await h.handleMergeNotes(a.id, b.id, null);
+  await h.handleSaveNote("video123", 30, "Video", "", "C");
+  await h.handleUndoNoteMerge();
+  assert.deepEqual(JSON.parse(JSON.stringify((await h.handleGetNotes(null)).notes.map(n => n.text))), ["C", "B", "A"]);
+  const merged = await h.handleMergeNotes(a.id, b.id, null);
+  await h.handleUpdateNote(merged.note.id, "Edited after merge", "Idea");
+  await assert.rejects(h.handleUndoNoteMerge(), /protect your edits/);
+  assert.equal((await h.handleGetNotes(null)).canUndoMerge, false);
+});
