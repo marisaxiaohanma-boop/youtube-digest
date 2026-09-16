@@ -142,7 +142,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Return the current video playback time (used by auto-scroll)
     const video = document.querySelector("video.html5-main-video");
     sendResponse({
-      currentTime: video ? Math.floor(video.currentTime) : 0,
+      currentTime: video ? video.currentTime : null,
+      videoId: new URL(location.href).searchParams.get("v"),
       paused: video ? video.paused : true,
     });
     return false;

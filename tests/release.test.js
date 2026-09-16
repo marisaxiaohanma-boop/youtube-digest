@@ -224,20 +224,15 @@ test("selection actions use two equal edge-to-edge hover areas", () => {
   );
 });
 
-test("note delete is an accessible SVG action at the end of the action row", () => {
+test("note cards expose the four requested actions and accessible merge controls", () => {
   const js = read("sidepanel.js");
-  const css = read("sidepanel.css");
-
-  assert.match(
-    js,
-    /<div class="note-actions">[\s\S]*class="[^"]*note-play[^"]*"[\s\S]*class="note-delete"[\s\S]*aria-label="Delete note"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/,
-  );
-  assert.doesNotMatch(js, /class="note-delete"[^>]*>Delete<\/button>/);
-  assert.match(
-    css,
-    /\.note-delete\s*\{[^}]*place-items:\s*center;[^}]*margin-left:\s*auto;/,
-  );
-  assert.match(css, /\.note-delete:focus-visible\s*\{[^}]*outline:/);
+  assert.match(js, /class="note-action-btn note-play">Play/);
+  assert.match(js, /class="note-action-btn note-copy-text">Copy/);
+  assert.match(js, /class="note-action-btn note-edit">Edit/);
+  assert.match(js, /class="note-action-btn note-idea">Idea/);
+  assert.doesNotMatch(js, /class="note-delete"|class="note-action-btn note-copy-link"/);
+  assert.match(js, /aria-label="Merge with previous note"/);
+  assert.match(js, /aria-label="Merge with next note"/);
 });
 
 test("notes filters preserve selected contrast and expose pressed state", () => {

@@ -74,7 +74,7 @@ function sendTranslationMessage(message) {
       finish(
         reject,
         new Error(
-          "Translation request timed out after 130 seconds. Please Retry.",
+          "Request timed out after 130 seconds. Please Retry.",
         ),
       );
     }, TRANSLATION_MESSAGE_TIMEOUT_MS);
@@ -436,17 +436,8 @@ function setupEventListeners() {
   // Follow playback button — re-enables auto-scroll after user scrolled away
   document
     .getElementById("followPlaybackBtn")
-    ?.addEventListener("click", () => {
-      autoScrollEnabled = true;
-      document.getElementById("followPlaybackBtn").style.display = "none";
-      // Jump straight back to the line currently being spoken. We scroll
-      // directly (not via playbackTrackingTick) because the tick skips
-      // entries that are already highlighted — and the current line almost
-      // always IS highlighted, which made this button appear to do nothing.
-      if (!scrollToActiveEntry()) {
-        playbackTrackingTick(); // No highlight yet — let a tick establish one
-      }
-    });
+    ?.addEventListener("click", followPlayback);
+
 
   // Notes filter buttons
   document.getElementById("notesFilterThis")?.addEventListener("click", () => {
@@ -502,6 +493,10 @@ async function checkCurrentTab() {
 
     if (videoId) {
       currentVideoUrl = tab.url;
+      // Extension reloads can temporarily disconnect the content script.
+      // The tab title remains available while its metadata reconnects.
+      currentVideoTitle = (tab.title || "").replace(/ - YouTube$/, "").trim();
+      currentChannelName = "";
 
       try {
         // Route through background script for reliable message passing
@@ -511,14 +506,14 @@ async function checkCurrentTab() {
         });
         debugLog("[YouTube Digest Panel] getVideoInfo result:", result);
         if (result.success && result.response) {
-          currentVideoTitle = result.response.title || "";
+          currentVideoTitle = result.response.title || currentVideoTitle;
           currentChannelName = result.response.channelName || "";
           currentVideoDescription = result.response.description || "";
           currentVideoDuration = result.response.duration || 0;
         }
       } catch (e) {
         console.error("[YouTube Digest Panel] getVideoInfo error:", e);
-        currentVideoTitle = "";
+        // Keep the tab-title fallback when messaging is unavailable.
         currentChannelName = "";
         currentVideoDescription = "";
         currentVideoDuration = 0;
@@ -597,6 +592,8 @@ async function startDigest(videoId, videoUrl) {
     debugLog("Loading from cache:", videoId);
     currentVideoId = videoId;
     currentVideoUrl = videoUrl;
+    currentVideoTitle = currentVideoTitle || cached.videoTitle || "";
+    currentChannelName = currentChannelName || cached.channelName || "";
     currentAnalysis = cached.analysis || null;
     currentTranscript = cached.transcript;
     currentTranscriptText = cached.transcriptText;
@@ -1379,6 +1376,14 @@ function exportTranscript() {
 // ============================================================
 
 function showState(state) {
+  document.body?.classList.toggle("has-transcript-results", state === "results");
+  if (typeof questionAnswer !== "undefined" && questionAnswer?.videoId !== currentVideoId) {
+    questionAnswer = null;
+    questionContext = null;
+    answerElement.textContent = "";
+    questionStatus.textContent = "";
+    saveAnswerButton.hidden = true;
+  }
   document.getElementById("welcomeState").style.display =
     state === "welcome" ? "flex" : "none";
   document.getElementById("loadingState").style.display =
@@ -1771,12 +1776,16 @@ function setupExplainFeature() {
 
       // Allow any selection length.
       if (text.length > 0 && isInTranscript) {
-        selectedText = text;
+        const fragment = range.cloneContents();
+        fragment.querySelectorAll(".transcript-time").forEach((node) => node.remove());
+        fragment.querySelectorAll(".transcript-entry").forEach((node) => node.append("\n"));
+        selectedText = fragment.textContent.replace(/\s+/g, " ").trim();
         const startElement =
           range.startContainer.nodeType === 1
             ? range.startContainer
             : range.startContainer.parentElement;
-        const selectedRow = startElement?.closest(".transcript-entry");
+        const selectedRow = startElement?.closest(".transcript-entry") ||
+          [...transcriptList.querySelectorAll(".transcript-entry")].find((row) => range.intersectsNode(row));
         const rowSeconds = Number(selectedRow?.dataset.seconds);
         selectedTimestamp = Number.isFinite(rowSeconds) ? rowSeconds : 0;
 
@@ -2089,6 +2098,7 @@ async function loadNotes(videoId) {
       currentNotes = result.notes || [];
       currentNotesFilterVideoId = videoId;
       renderNotes(result.notes, videoId);
+      document.getElementById("undoNoteMerge").hidden = !result.canUndoMerge;
     }
   } catch (error) {
     console.error("[YouTube Digest Panel] Load notes error:", error);
@@ -2120,41 +2130,57 @@ function renderNotes(notes, filteredVideoId) {
     const translationId = getNoteTranslationId(note, index);
     const noteEl = document.createElement("div");
     noteEl.className = "note-item";
+    const canMerge = (neighbor) => neighbor && neighbor.videoId === note.videoId;
     noteEl.innerHTML = `
       <div class="note-header">
         <span class="note-timestamp" data-url="${escapeHtml(note.timestampedUrl)}" data-seconds="${Number(note.timestampSeconds) || 0}">${escapeHtml(note.timestamp)}</span>
         ${!filteredVideoId ? `<span class="note-video-title">${escapeHtml(note.videoTitle)}</span>` : ""}
+        <div class="note-merge-actions">
+          <button class="note-action-btn merge-up" aria-label="Merge with previous note" title="与上一条合并" ${canMerge(notes[index - 1]) ? "" : "disabled"}>↑</button>
+          <button class="note-action-btn merge-down" aria-label="Merge with next note" title="与下一条合并" ${canMerge(notes[index + 1]) ? "" : "disabled"}>↓</button>
+        </div>
       </div>
       <div class="note-text">${renderLocalizedContent(note.text, "notes", translationId)}</div>
+      <div class="note-thoughts">${note.thoughts ? `<strong>Idea</strong><br>${escapeHtml(note.thoughts)}` : ""}</div>
       <div class="note-actions">
-        <button class="note-action-btn note-copy-text">Copy text</button>
-        <button class="note-action-btn note-copy-link" data-url="${escapeHtml(note.timestampedUrl)}">Copy timestamp</button>
-        <button class="note-action-btn note-play" data-seconds="${Number(note.timestampSeconds) || 0}">Play</button>
-        <button class="note-delete" data-id="${escapeHtml(note.id)}" type="button" aria-label="Delete note" title="Delete note">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 6h18"></path>
-            <path d="M8 6V4h8v2"></path>
-            <path d="m19 6-1 14H6L5 6"></path>
-            <path d="M10 11v5"></path>
-            <path d="M14 11v5"></path>
-          </svg>
-        </button>
+        <button class="note-action-btn note-play">Play</button>
+        <button class="note-action-btn note-copy-text">Copy</button>
+        <button class="note-action-btn note-edit">Edit</button>
+        <button class="note-action-btn note-idea">Idea</button>
       </div>
+      <p class="note-status" role="status"></p>
     `;
+
+    noteEl.querySelector(".note-edit").addEventListener("click", () => openNoteEditor(noteEl, note, filteredVideoId));
+
+    noteEl.querySelector(".note-idea").addEventListener("click", () => openNoteEditor(noteEl, note, filteredVideoId, "thoughts"));
+    for (const [selector, neighbor] of [[".merge-up", notes[index - 1]], [".merge-down", notes[index + 1]]]) {
+      noteEl.querySelector(selector).addEventListener("click", async () => {
+        const status = noteEl.querySelector(".note-status");
+        if (document.querySelector(".note-editor")) {
+          status.textContent = "Save or cancel your edit before merging.";
+          return;
+        }
+        noteEl.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+        try {
+          const result = await chrome.runtime.sendMessage({ action: "mergeNotes", noteId: note.id, neighborId: neighbor.id, videoId: filteredVideoId });
+          if (!result?.success) throw new Error(result?.error || "Could not merge notes");
+          document.getElementById("undoNoteMerge").hidden = false;
+          document.getElementById("notesExportStatus").textContent = "Notes merged. You can undo the last merge.";
+          await loadNotes(filteredVideoId);
+        } catch (error) {
+          status.textContent = error.message;
+          noteEl.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+          noteEl.querySelector(".merge-up").disabled = !canMerge(notes[index - 1]);
+          noteEl.querySelector(".merge-down").disabled = !canMerge(notes[index + 1]);
+        }
+      });
+    }
 
     // Timestamp click - play from this point (in this tab or a new one)
     noteEl.querySelector(".note-timestamp").addEventListener("click", () => {
       playNote(note);
     });
-
-    // Delete button
-    noteEl
-      .querySelector(".note-delete")
-      .addEventListener("click", async (e) => {
-        e.stopPropagation();
-        await deleteNote(note.id);
-        loadNotes(filteredVideoId);
-      });
 
     // Copy text button — copies just the note's text
     noteEl
@@ -2167,23 +2193,7 @@ function renderNotes(notes, filteredVideoId) {
           const btn = noteEl.querySelector(".note-copy-text");
           btn.textContent = "Copied";
           setTimeout(() => {
-            btn.textContent = "Copy text";
-          }, 2000);
-        } catch (err) {
-          console.error("Copy failed:", err);
-        }
-      });
-
-    // Copy timestamp button — copies the timestamped YouTube link
-    noteEl
-      .querySelector(".note-copy-link")
-      .addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(note.timestampedUrl);
-          const btn = noteEl.querySelector(".note-copy-link");
-          btn.textContent = "Copied";
-          setTimeout(() => {
-            btn.textContent = "Copy timestamp";
+            btn.textContent = "Copy";
           }, 2000);
         } catch (err) {
           console.error("Copy failed:", err);
@@ -2275,19 +2285,46 @@ function stopPlaybackTracking() {
  * One tick of the playback tracker. Gets current video time from the
  * YouTube tab and highlights + scrolls to the matching transcript entry.
  */
-async function playbackTrackingTick() {
+async function readPlaybackTime() {
+  const result = await chrome.runtime.sendMessage({ action: "readPlaybackTime", tabId: youtubeTabId, videoId: currentVideoId });
+  if (!result?.success) throw new Error(result?.error || "Cannot read playback time. Reopen the panel on your video.");
+  return result.currentTime;
+}
+
+async function followPlayback() {
+  const button = document.getElementById("followPlaybackBtn");
+  const videoId = currentVideoId;
+  button.disabled = true;
+  let timeout;
   try {
-    const result = await chrome.runtime.sendMessage({
-      action: "relayToContent",
-      payload: { action: "getCurrentTime" },
-    });
-
-    if (!result.success || !result.response) return;
-
-    const currentTime = result.response.currentTime || 0;
-    highlightActiveEntry(currentTime);
+    const seconds = await Promise.race([
+      readPlaybackTime(),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Playback request timed out. Refresh the video and retry.")), 5000); }),
+    ]);
+    if (videoId !== currentVideoId || !transcriptTabIsActive()) return;
+    autoScrollEnabled = true;
+    highlightActiveEntry(seconds, true);
+    if (!scrollToActiveEntry()) throw new Error("No transcript paragraph is available at this time.");
+    button.style.display = "none";
+    button.textContent = "Follow playback";
+    button.title = "";
   } catch (error) {
-    // Silently ignore — YouTube tab might be closed or navigated away
+    autoScrollEnabled = false;
+    button.style.display = "block";
+    button.textContent = "Retry follow playback";
+    button.title = error.message;
+    questionStatus.textContent = error.message;
+  } finally { clearTimeout(timeout); button.disabled = false; }
+}
+
+async function playbackTrackingTick() {
+  const videoId = currentVideoId;
+  try {
+    const seconds = await readPlaybackTime();
+    if (videoId !== currentVideoId || !transcriptTabIsActive()) return;
+    highlightActiveEntry(seconds);
+  } catch (error) {
+    // Keep the current reading position if the video is temporarily unavailable.
   }
 }
 
@@ -2315,7 +2352,7 @@ function scrollToActiveEntry() {
  *
  * @param {number} currentSeconds - Current video playback time in seconds
  */
-function highlightActiveEntry(currentSeconds) {
+function highlightActiveEntry(currentSeconds, force = false) {
   const transcriptList = document.getElementById("transcriptList");
   if (!transcriptList) return;
 
@@ -2323,12 +2360,12 @@ function highlightActiveEntry(currentSeconds) {
   if (entries.length === 0) return;
 
   // Find the entry whose time range contains the current playback time
-  let activeEntry = null;
+  let activeEntry = currentSeconds < Number(entries[0].dataset.seconds) ? entries[0] : null;
   entries.forEach((entry, index) => {
-    const entrySeconds = parseInt(entry.dataset.seconds);
+    const entrySeconds = Number(entry.dataset.seconds);
     const nextEntry = entries[index + 1];
     const nextSeconds = nextEntry
-      ? parseInt(nextEntry.dataset.seconds)
+      ? Number(nextEntry.dataset.seconds)
       : Infinity;
 
     if (currentSeconds >= entrySeconds && currentSeconds < nextSeconds) {
@@ -2339,7 +2376,7 @@ function highlightActiveEntry(currentSeconds) {
   if (!activeEntry) return;
 
   // Skip if this entry is already highlighted (no DOM thrashing)
-  if (activeEntry.classList.contains("active-playback")) return;
+  if (!force && activeEntry.classList.contains("active-playback")) return;
 
   // Remove old highlight, add new one
   entries.forEach((e) => e.classList.remove("active-playback"));
@@ -2905,3 +2942,144 @@ globalThis.__YTD_TRANSCRIPT_TESTING__ = {
   renderSubtitleInlineMarkup,
   renderTranscriptSegmentContent,
 };
+
+
+function openNoteEditor(noteEl, note, filter, field = "text") {
+  const existing = noteEl.querySelector(".note-editor");
+  if (existing) { existing.elements[field].focus(); return; }
+  const editor = document.createElement("form");
+  editor.className = "note-editor";
+  editor.innerHTML = `<label>Note<textarea name="text" rows="5" maxlength="30000" required></textarea></label>
+    <label>Idea<textarea name="thoughts" rows="3" maxlength="30000" placeholder="Add an idea or question…"></textarea></label>
+    <button class="enhance-btn" type="submit">Save changes</button>
+    <button class="enhance-btn" type="button">Cancel</button><p role="status"></p>`;
+  editor.elements.text.value = note.text;
+  editor.elements.thoughts.value = note.thoughts || "";
+  editor.querySelector('[type="button"]').onclick = () => editor.remove();
+  editor.onsubmit = async (event) => {
+    event.preventDefault();
+    const save = editor.querySelector('[type="submit"]');
+    save.disabled = true;
+    try {
+      const result = await chrome.runtime.sendMessage({ action: "updateNote", noteId: note.id,
+        text: editor.elements.text.value, thoughts: editor.elements.thoughts.value });
+      if (!result?.success) throw new Error(result?.error || "Could not save changes");
+      // Edited source text must not reuse a previous translation.
+      for (const key of interfaceTranslationCache.keys()) {
+        if (key.includes(":notes:")) interfaceTranslationCache.delete(key);
+      }
+      await loadNotes(filter);
+    } catch (error) {
+      editor.querySelector('[role="status"]').textContent = error.message;
+    } finally { save.disabled = false; }
+  };
+  noteEl.appendChild(editor);
+  editor.elements[field].focus();
+}
+
+function notesToMarkdown(notes) {
+  return "# YouTube Digest notes\n\n" + notes.map((note) =>
+    `## ${note.videoTitle || "Untitled video"} — ${note.timestamp}\n\n${note.timestampedUrl}\n\n${note.text}` +
+    (note.thoughts ? `\n\n### Idea\n\n${note.thoughts}` : "")
+  ).join("\n\n---\n\n") + "\n";
+}
+
+// Export the active filter: This Video or All Notes, including personal thoughts.
+document.getElementById("exportNotes")?.addEventListener("click", async () => {
+  const status = document.getElementById("notesExportStatus");
+  try {
+    const result = await chrome.runtime.sendMessage({ action: "getNotes", videoId: currentNotesFilterVideoId });
+    if (!result?.success) throw new Error(result?.error || "Could not load notes");
+    if (!result.notes.length) { status.textContent = "No notes to export."; return; }
+    const url = URL.createObjectURL(new Blob([notesToMarkdown(result.notes)], { type: "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `youtube-notes-${currentNotesFilterVideoId || "all"}.md`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = `Exported ${result.notes.length} notes.`;
+  } catch (error) { status.textContent = error.message; }
+});
+
+// Resolve the visible reading position when focusing the question field, so
+// selecting text, scrolling, or video playback cannot change an in-flight answer.
+let questionContext = null;
+let questionAnswer = null;
+function captureQuestionContext() {
+  const rows = [...document.querySelectorAll("#transcriptList .transcript-entry")];
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  const selectedRow = (node?.nodeType === 1 ? node : node?.parentElement)?.closest(".transcript-entry");
+  const bounds = document.getElementById("contentArea").getBoundingClientRect();
+  let index = selection && !selection.isCollapsed ? rows.indexOf(selectedRow) : -1;
+  if (index < 0) index = rows.findIndex((row) => {
+    const rect = row.getBoundingClientRect();
+    return rect.bottom > bounds.top + 20 && rect.top < bounds.bottom;
+  });
+  if (index < 0 || !currentVideoId) return null;
+  const surrounding = rows.slice(Math.max(0, index - 3), index + 4);
+  const text = surrounding.map((row) => row.textContent.trim()).join("\n");
+  return { videoId: currentVideoId, videoTitle: currentVideoTitle, channelName: currentChannelName,
+    timestamp: Number(rows[index].dataset.seconds), transcriptContext: text,
+    label: rows[index].querySelector(".transcript-time").textContent };
+}
+document.getElementById("contentArea")?.addEventListener("scroll", () => { questionContext = null; });
+const questionForm = document.getElementById("transcriptQuestionForm");
+const questionInput = document.getElementById("transcriptQuestion");
+const questionStatus = document.getElementById("questionStatus");
+const answerElement = document.getElementById("transcriptAnswer");
+const saveAnswerButton = document.getElementById("saveTranscriptAnswer");
+questionInput?.addEventListener("focus", () => {
+  questionContext = captureQuestionContext();
+  questionStatus.textContent = questionContext ? `Context: ${questionContext.label} · this paragraph + 3 before / after` : "Open a transcript first.";
+});
+questionForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const context = questionContext?.videoId === currentVideoId ? questionContext : captureQuestionContext();
+  const question = questionInput.value.trim();
+  if (!context || !question) { questionStatus.textContent = "Open a transcript and enter a question."; return; }
+  const button = questionForm.querySelector('[type="submit"]');
+  button.disabled = true;
+  saveAnswerButton.hidden = true;
+  answerElement.textContent = "";
+  questionAnswer = null;
+  questionStatus.textContent = "Thinking…";
+  try {
+    const result = await sendTranslationMessage({ action: "askTranscript", ...context, question });
+    if (currentVideoId !== context.videoId) return;
+    if (!result?.success) throw new Error(result?.error || "Could not get an answer");
+    questionAnswer = { ...context, question, answer: result.answer };
+    answerElement.textContent = result.answer;
+    saveAnswerButton.hidden = false;
+    questionStatus.textContent = `AI answer · context at ${context.label}`;
+  } catch (error) { questionStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+saveAnswerButton?.addEventListener("click", async () => {
+  const answer = questionAnswer;
+  if (!answer) return;
+  saveAnswerButton.disabled = true;
+  try {
+    const result = await chrome.runtime.sendMessage({ action: "saveNote", ...answer,
+      selectedText: `Question: ${answer.question}\n\nAI answer:\n${answer.answer}` });
+    if (!result?.success) throw new Error(result?.error || "Could not save answer");
+    questionStatus.textContent = "Saved to Notes.";
+    saveAnswerButton.hidden = true;
+  } catch (error) { questionStatus.textContent = error.message; }
+  finally { saveAnswerButton.disabled = false; }
+});
+
+
+document.getElementById("undoNoteMerge")?.addEventListener("click", async () => {
+  const button = document.getElementById("undoNoteMerge");
+  const status = document.getElementById("notesExportStatus");
+  if (document.querySelector(".note-editor")) { status.textContent = "Save or cancel your edit before undoing."; return; }
+  button.disabled = true;
+  try {
+    const result = await chrome.runtime.sendMessage({ action: "undoNoteMerge" });
+    if (!result?.success) throw new Error(result?.error || "Could not undo merge");
+    status.textContent = "Merge undone.";
+    await loadNotes(currentNotesFilterVideoId);
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+});

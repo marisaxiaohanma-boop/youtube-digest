@@ -78,6 +78,8 @@ function loadBackgroundHelpers({
     aiModel: "deepseek-v4-flash",
   },
   fetchImpl = fetch,
+  tabsGet = async () => ({ url: "https://www.youtube.com/watch?v=video123" }),
+  executeScript = async () => [{ result: { currentTime: 1415, videoId: "video123" } }],
   setTimeoutImpl = () => 0,
   clearTimeoutImpl = () => {},
   sidePanel = {
@@ -98,6 +100,7 @@ function loadBackgroundHelpers({
     clearTimeout: clearTimeoutImpl,
     importScripts() {},
     chrome: {
+      scripting: { executeScript },
       storage: {
         local: {
           setAccessLevel: () => Promise.resolve(),
@@ -125,7 +128,7 @@ function loadBackgroundHelpers({
         getURL: (resourcePath) => `chrome-extension://test/${resourcePath}`,
         sendMessage: () => Promise.resolve({ success: true }),
       },
-      tabs: { onUpdated: listeners, onActivated: listeners },
+      tabs: { get: tabsGet, onUpdated: listeners, onActivated: listeners },
     },
     YTD_SETTINGS: {
       STORAGE_KEY: "ytd_settings",
@@ -509,7 +512,7 @@ test("all AI product requests use DeepSeek non-thinking and JSON behavior", asyn
   const backgroundSource = read("background.js");
   assert.equal(
     (backgroundSource.match(/await requestAiCompletion\(\{/g) || []).length,
-    4,
+    5,
   );
   assert.doesNotMatch(backgroundSource, /disableThinking/);
   for (const callPath of [
@@ -517,6 +520,7 @@ test("all AI product requests use DeepSeek non-thinking and JSON behavior", asyn
     "cleanupNoteText",
     "handleExplainSelection",
     "callAiTranslation",
+    "handleAskTranscript",
   ]) {
     assert.match(
       backgroundSource,
@@ -780,4 +784,112 @@ test("Chinese prompt preserves natural bilingual-learning style rules", () => {
   assert.match(prompt, /Use 你, never 您/);
   assert.match(prompt, /spaces between Chinese and adjacent English words or digits/);
   assert.match(prompt, /source-language `text`/);
+});
+
+
+test("editing a note preserves its original text, timestamp, and personal thoughts", async () => {
+  const helpers = loadBackgroundHelpers();
+  const saved = await helpers.handleSaveNote("video123", 92, "Video", "Channel", "Original quote");
+  await helpers.handleUpdateNote(saved.note.id, "Edited quote", "My question?\nMy interpretation.");
+  const { notes } = await helpers.handleGetNotes("video123");
+  assert.equal(notes[0].text, "Edited quote");
+  assert.equal(notes[0].rawText, "Original quote");
+  assert.equal(notes[0].timestampSeconds, 92);
+  assert.equal(notes[0].thoughts, "My question?\nMy interpretation.");
+  await assert.rejects(helpers.handleUpdateNote(saved.note.id, " ", ""));
+  await assert.rejects(helpers.handleUpdateNote("missing", "text", ""));
+});
+
+test("long excerpts and saved answers are not silently truncated or flattened", async () => {
+  const helpers = loadBackgroundHelpers();
+  const text = "Question: GPU?\n\nAI answer:\n" + "Long explanation. ".repeat(300);
+  const saved = await helpers.handleSaveNote("video123", 42, "Video", "Channel", text);
+  assert.equal(saved.note.text, text.trim());
+  const oversized = await helpers.handleSaveNote("video123", 42, "Video", "Channel", "a".repeat(30001));
+  assert.equal(oversized.success, false);
+});
+
+test("context Q&A sends the supplied context and question through the configured provider", async () => {
+  let body;
+  const helpers = loadBackgroundHelpers({ fetchImpl: async (_url, options) => {
+    body = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: "A graphics processing unit." } }] }) };
+  }});
+  const result = await helpers.handleAskTranscript({ question: "What is GPU?", transcriptContext: "We train on GPUs.", videoTitle: "Computing" });
+  assert.equal(result.answer, "A graphics processing unit.");
+  const payload = JSON.parse(body.messages[1].content);
+  assert.equal(payload.transcriptContext, "We train on GPUs.");
+  assert.equal(payload.question, "What is GPU?");
+  assert.deepEqual(body.thinking, { type: "disabled" });
+  await assert.rejects(helpers.handleAskTranscript({ question: "GPU?", transcriptContext: "" }));
+});
+
+
+test("merge adjacent notes preserves text, ideas and earliest source, and undo restores both", async () => {
+  const h = loadBackgroundHelpers();
+  const first = (await h.handleSaveNote("video123", 10, "Video", "Channel", "Earlier quote")).note;
+  const second = (await h.handleSaveNote("video123", 20, "Video", "Channel", "Later quote")).note;
+  await h.handleUpdateNote(first.id, first.text, "Earlier idea");
+  await h.handleUpdateNote(second.id, second.text, "Later idea");
+  const before = JSON.stringify((await h.handleGetNotes(null)).notes);
+  await h.handleMergeNotes(second.id, first.id, "video123");
+  const result = await h.handleGetNotes(null);
+  assert.equal(result.notes.length, 1);
+  assert.equal(result.notes[0].text, "Earlier quote\n\nLater quote");
+  assert.equal(result.notes[0].thoughts, "Earlier idea\n\nLater idea");
+  assert.equal(result.notes[0].timestampSeconds, 10);
+  assert.equal(result.canUndoMerge, true);
+  await h.handleUndoNoteMerge();
+  assert.equal(JSON.stringify((await h.handleGetNotes(null)).notes), before);
+});
+
+test("merge rejects different videos, non-neighbors and stale requests", async () => {
+  const h = loadBackgroundHelpers();
+  const a = (await h.handleSaveNote("video123", 10, "Video", "", "A")).note;
+  const b = (await h.handleSaveNote("other123", 15, "Other", "", "B")).note;
+  const c = (await h.handleSaveNote("video123", 20, "Video", "", "C")).note;
+  await assert.rejects(h.handleMergeNotes(a.id, b.id, null), /same video/);
+  await assert.rejects(h.handleMergeNotes(a.id, c.id, null), /Notes changed/);
+  await h.handleMergeNotes(a.id, c.id, "video123");
+  await assert.rejects(h.handleMergeNotes(a.id, c.id, "video123"), /Notes changed/);
+  await h.handleUndoNoteMerge();
+  assert.deepEqual(JSON.parse(JSON.stringify((await h.handleGetNotes(null)).notes.map(n => n.text))), ["C", "B", "A"]);
+});
+
+test("undo preserves newer notes and refuses to overwrite edits", async () => {
+  const h = loadBackgroundHelpers();
+  const a = (await h.handleSaveNote("video123", 10, "Video", "", "A")).note;
+  const b = (await h.handleSaveNote("video123", 20, "Video", "", "B")).note;
+  await h.handleMergeNotes(a.id, b.id, null);
+  await h.handleSaveNote("video123", 30, "Video", "", "C");
+  await h.handleUndoNoteMerge();
+  assert.deepEqual(JSON.parse(JSON.stringify((await h.handleGetNotes(null)).notes.map(n => n.text))), ["C", "B", "A"]);
+  const merged = await h.handleMergeNotes(a.id, b.id, null);
+  await h.handleUpdateNote(merged.note.id, "Edited after merge", "Idea");
+  await assert.rejects(h.handleUndoNoteMerge(), /protect your edits/);
+  assert.equal((await h.handleGetNotes(null)).canUndoMerge, false);
+});
+
+
+test("playback reads the real player without a content-script listener after extension reload", async () => {
+  let target;
+  const h = loadBackgroundHelpers({ executeScript: async (options) => {
+    target = options;
+    const result = vm.runInNewContext(`(${options.func.toString()})()`, {
+      document: { querySelector: () => ({ currentTime: 1415.25 }) },
+      location: { href: "https://www.youtube.com/watch?v=video123" }, URL,
+    });
+    return [{ result }];
+  }});
+  const result = await h.handleReadPlaybackTime(7, "video123");
+  assert.equal(result.currentTime, 1415.25);
+  assert.equal(target.target.tabId, 7);
+  assert.equal(target.world, "MAIN");
+});
+
+test("playback rejects another video and an unavailable player", async () => {
+  const h = loadBackgroundHelpers();
+  await assert.rejects(h.handleReadPlaybackTime(7, "other123"), /video has changed/);
+  const missing = loadBackgroundHelpers({ executeScript: async () => [{ result: { currentTime: null, videoId: "video123" } }] });
+  await assert.rejects(missing.handleReadPlaybackTime(7, "video123"), /not ready/);
 });
