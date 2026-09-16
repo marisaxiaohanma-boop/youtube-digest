@@ -1499,3 +1499,23 @@ body {
   color: var(--accent);
   background: var(--accent-dim);
 }
+
+/* Personal learning tools, using the existing panel palette. */
+.transcript-time { user-select: none; }
+.note-thoughts { white-space: pre-wrap; color: var(--text-secondary); margin-top: 12px; }
+.note-thoughts:empty { display: none; }
+.note-editor label { display: block; margin: 12px 0; color: var(--text-secondary); }
+.note-editor textarea { display: block; width: 100%; margin-top: 6px; padding: 10px; resize: vertical; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-heavy); border-radius: var(--r-sm); }
+.transcript-question-dock { display: none; flex-shrink: 0; padding: 12px 16px; background: var(--surface-raised); border-top: 1px solid var(--border-heavy); box-shadow: var(--shadow-md); }
+body.has-transcript-results:has(.tab-panel[data-panel="transcript"].active) .transcript-question-dock { display: block; }
+.transcript-question-dock summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+#transcriptQuestionForm { display: flex; gap: 8px; }
+#transcriptQuestion { min-width: 0; flex: 1; padding: 9px; font: inherit; border: 1px solid var(--border-heavy); border-radius: var(--r-sm); }
+#questionStatus, #notesExportStatus { font-size: 12px; color: var(--text-secondary); margin: 6px 0; }
+#transcriptAnswer { white-space: pre-wrap; overflow-y: auto; max-height: 25vh; font-size: 14px; line-height: 1.6; }
+#saveTranscriptAnswer { margin-top: 8px; }
+[hidden] { display: none !important; }
+
+.transcript-question-dock .follow-playback-btn { position: static; transform: none; margin: 0 auto 8px; }
+.transcript-question-dock .follow-playback-btn:hover { transform: translateY(-1px); }
+.content { min-height: 0; }

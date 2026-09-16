@@ -1,5 +1,7 @@
 # YouTube Digest
 
+Personal fork: editable notes and thoughts, Markdown export, context Q&A, clean excerpt timestamps, and refreshed Follow playback. See [fork usage and validation](FORK-NOTES.md).
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 Turn every YouTube video into a resource for deep learning. YouTube Digest brings transcripts, bilingual translation, AI overviews, explanations, and timestamped notes into one Chrome side panel, so you can study ideas and language without losing your place.

@@ -86,3 +86,7 @@ Privacy-relevant changes will be documented in this file and in the repository h
 ## Questions
 
 This repository does not provide a public support or issue channel. Review this policy, the source code, and each provider's documentation before using the extension. For a vulnerability or accidental secret exposure, follow the private process in [SECURITY.md](SECURITY.md).
+
+## Context questions in this fork
+
+Submitting a transcript question sends your question, video title, and the selected or first visible paragraph plus up to three displayed paragraphs on each side to the configured DeepSeek API. Notes and personal thoughts remain in Chrome local storage. Export writes the selected notes to a local Markdown file. Unsaved question/answer state is not a persistent conversation history.

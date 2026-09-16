@@ -1,5 +1,7 @@
 # YouTube Digest
 
+个人修改版：笔记编辑与个人想法、Markdown 批量导出、上下文问答、摘录时间戳清理，以及 Follow playback 修复。详见 [使用与验证说明](FORK-NOTES.md)。
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 把每个 YouTube 视频变成一份可以深入学习的资料。YouTube Digest 把字幕、双语翻译、AI 概览、内容讲解和时间戳笔记放进同一个 Chrome 侧边栏，让你可以持续学习视频中的知识和语言，同时不丢失原视频上下文。

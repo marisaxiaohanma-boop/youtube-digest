@@ -247,12 +247,15 @@
               Move your mouse over the video and click Note to save a
               timestamped note, or press the "n" key while the video is focused.
             </p>
+            <button class="enhance-btn" id="exportNotes">Export notes (.md)</button>
+            <p id="notesExportStatus" role="status"></p>
             <div id="notesList"></div>
           </div>
         </div>
       </div>
     </div>
 
+    <aside class="transcript-question-dock" aria-label="Ask about this transcript">
     <!-- Auto-scroll follow button — appears when user scrolls away from playback position -->
     <button
       class="follow-playback-btn"
@@ -262,6 +265,17 @@
       Follow playback
     </button>
 
+      <details open>
+        <summary>Ask about this transcript</summary>
+        <form id="transcriptQuestionForm">
+          <input id="transcriptQuestion" aria-label="Your question" placeholder="What does GPU mean here?" maxlength="2000" required>
+          <button class="enhance-btn" type="submit">Ask</button>
+        </form>
+        <p id="questionStatus" role="status"></p>
+        <div id="transcriptAnswer" aria-live="polite"></div>
+        <button id="saveTranscriptAnswer" class="enhance-btn" hidden>Save to Notes</button>
+      </details>
+    </aside>
     <script src="settings.js"></script>
     <script src="sidepanel.js"></script>
   </body>
