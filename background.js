@@ -397,6 +397,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === "readPlaybackTime") {
+    handleReadPlaybackTime(message.tabId, message.videoId)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   if (message.action === "mergeNotes" || message.action === "undoNoteMerge") {
     const operation = message.action === "mergeNotes"
       ? handleMergeNotes(message.noteId, message.neighborId, message.videoId)
@@ -1747,6 +1754,7 @@ globalThis.__YTD_TRANSLATION_TESTING__ = {
   normalizeTranslatedSegmentBatch,
   handleSaveNote,
   handleUpdateNote,
+  handleReadPlaybackTime,
   handleMergeNotes,
   handleUndoNoteMerge,
   handleGetNotes,
@@ -1832,4 +1840,30 @@ function handleUndoNoteMerge() {
     await chrome.storage.local.set({ ytd_notes: notes, ytd_note_merge_undo: null });
     return { success: true };
   });
+}
+
+
+// Read the player independently of content-script messaging. Reloading an
+// unpacked extension invalidates the old page's listener until a page refresh.
+async function handleReadPlaybackTime(tabId, videoId) {
+  if (!Number.isInteger(tabId) || tabId < 0) throw new Error("Video tab is unavailable. Reopen the panel on your video.");
+  const tab = await chrome.tabs.get(tabId);
+  const url = new URL(tab.url || "https://invalid.local");
+  if (url.hostname !== "www.youtube.com" || url.searchParams.get("v") !== videoId) {
+    throw new Error("The video has changed. Reopen the panel on your current video.");
+  }
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => {
+      const video = document.querySelector("video.html5-main-video");
+      return { currentTime: video ? video.currentTime : null,
+        videoId: new URL(location.href).searchParams.get("v") };
+    },
+  });
+  const playback = results[0]?.result;
+  if (!playback || playback.videoId !== videoId || playback.currentTime == null || !Number.isFinite(playback.currentTime)) {
+    throw new Error("The video player is not ready yet. Try again in a moment.");
+  }
+  return { success: true, ...playback };
 }

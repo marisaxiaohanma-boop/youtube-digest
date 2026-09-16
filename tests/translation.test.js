@@ -78,6 +78,8 @@ function loadBackgroundHelpers({
     aiModel: "deepseek-v4-flash",
   },
   fetchImpl = fetch,
+  tabsGet = async () => ({ url: "https://www.youtube.com/watch?v=video123" }),
+  executeScript = async () => [{ result: { currentTime: 1415, videoId: "video123" } }],
   setTimeoutImpl = () => 0,
   clearTimeoutImpl = () => {},
   sidePanel = {
@@ -98,6 +100,7 @@ function loadBackgroundHelpers({
     clearTimeout: clearTimeoutImpl,
     importScripts() {},
     chrome: {
+      scripting: { executeScript },
       storage: {
         local: {
           setAccessLevel: () => Promise.resolve(),
@@ -125,7 +128,7 @@ function loadBackgroundHelpers({
         getURL: (resourcePath) => `chrome-extension://test/${resourcePath}`,
         sendMessage: () => Promise.resolve({ success: true }),
       },
-      tabs: { onUpdated: listeners, onActivated: listeners },
+      tabs: { get: tabsGet, onUpdated: listeners, onActivated: listeners },
     },
     YTD_SETTINGS: {
       STORAGE_KEY: "ytd_settings",
@@ -865,4 +868,28 @@ test("undo preserves newer notes and refuses to overwrite edits", async () => {
   await h.handleUpdateNote(merged.note.id, "Edited after merge", "Idea");
   await assert.rejects(h.handleUndoNoteMerge(), /protect your edits/);
   assert.equal((await h.handleGetNotes(null)).canUndoMerge, false);
+});
+
+
+test("playback reads the real player without a content-script listener after extension reload", async () => {
+  let target;
+  const h = loadBackgroundHelpers({ executeScript: async (options) => {
+    target = options;
+    const result = vm.runInNewContext(`(${options.func.toString()})()`, {
+      document: { querySelector: () => ({ currentTime: 1415.25 }) },
+      location: { href: "https://www.youtube.com/watch?v=video123" }, URL,
+    });
+    return [{ result }];
+  }});
+  const result = await h.handleReadPlaybackTime(7, "video123");
+  assert.equal(result.currentTime, 1415.25);
+  assert.equal(target.target.tabId, 7);
+  assert.equal(target.world, "MAIN");
+});
+
+test("playback rejects another video and an unavailable player", async () => {
+  const h = loadBackgroundHelpers();
+  await assert.rejects(h.handleReadPlaybackTime(7, "other123"), /video has changed/);
+  const missing = loadBackgroundHelpers({ executeScript: async () => [{ result: { currentTime: null, videoId: "video123" } }] });
+  await assert.rejects(missing.handleReadPlaybackTime(7, "video123"), /not ready/);
 });

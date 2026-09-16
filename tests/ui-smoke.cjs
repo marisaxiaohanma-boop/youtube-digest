@@ -14,6 +14,7 @@ const root = path.resolve(__dirname, '..');
    const listeners={addListener(){}};
    window.testNotes=[{id:'n1',videoId:'video123',videoTitle:'GPU lesson',timestamp:'0:40',timestampSeconds:40,timestampedUrl:'https://www.youtube.com/watch?v=video123&t=40s',text:'Original quote',rawText:'Original quote'}];
    window.chrome={runtime:{onMessage:listeners,sendMessage:async m=>{
+     if(m.action==='readPlaybackTime')return window.failPlayback ? {success:false,error:'Player unavailable'} : {success:true,currentTime:240,videoId:'video123'};
      if(m.action==='relayToContent')return {success:true,response:{currentTime:240,videoId:'video123'}};
      if(m.action==='getNotes')return {success:true,notes:window.testNotes.filter(n=>!m.videoId||n.videoId===m.videoId),canUndoMerge:!!window.testUndo};
      if(m.action==='mergeNotes'){window.testUndo=structuredClone(window.testNotes);window.lastMerge=m;window.testNotes=[{...window.testNotes[0],text:window.testNotes.map(n=>n.text).join('\n\n')}];return {success:true};}
@@ -86,7 +87,7 @@ const root = path.resolve(__dirname, '..');
  const edge=await page.evaluate(()=>captureQuestionContext());
  assert(edge.transcriptContext.includes('Paragraph 3:'));assert(!edge.transcriptContext.includes('Paragraph 4:'));
  // Follow retries remain available if the video cannot be read.
- await page.evaluate(async()=>{youtubeTabId=7;chrome.tabs.sendMessage=async()=>({currentTime:null});await followPlayback();});
+ await page.evaluate(async()=>{youtubeTabId=7;window.failPlayback=true;await followPlayback();});
  assert.equal(await page.locator('#followPlaybackBtn').textContent(),'Retry follow playback');
  assert.deepEqual(errors,[]);
  console.log('UI checks passed: multi-row selection, pinned dock, 7-paragraph context, Q&A save, note edits/thoughts, Markdown download.');

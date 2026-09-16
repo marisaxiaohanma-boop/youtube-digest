@@ -27,3 +27,5 @@ The browser smoke test covers multi-row selection, anchored Q&A context, answer 
 The upper-right ↑ and ↓ buttons merge with the previous or next note in the current list. Buttons are disabled at the list edges and when the adjacent note belongs to a different video. Save or cancel an open editor first. The merged text and ideas follow video-time order and retain the earlier source timestamp. **Undo merge** restores both originals for the last merge, including after a panel close. Editing the merged note disables undo to protect the new edits. No AI calls are made for merging.
 
 The header keeps the course title on the left and language controls on the right. If extension reload temporarily disconnects video metadata messaging, the Chrome tab title and cached title/channel fill the header.
+
+Playback reads the player directly through the existing scripting permission, so extension reloads no longer require refreshing the video to re-establish a content-script listener. Reads are scoped to the panel's video tab and video ID.

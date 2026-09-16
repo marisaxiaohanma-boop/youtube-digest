@@ -2286,14 +2286,9 @@ function stopPlaybackTracking() {
  * YouTube tab and highlights + scrolls to the matching transcript entry.
  */
 async function readPlaybackTime() {
-  const response = youtubeTabId
-    ? await chrome.tabs.sendMessage(youtubeTabId, { action: "getCurrentTime" })
-    : (await chrome.runtime.sendMessage({ action: "relayToContent", payload: { action: "getCurrentTime" } }))?.response;
-  if (!response || response.currentTime == null || !Number.isFinite(Number(response.currentTime)) ||
-      (response.videoId && response.videoId !== currentVideoId)) {
-    throw new Error("Cannot read this video's playback time. Refresh the YouTube tab and try again.");
-  }
-  return Number(response.currentTime);
+  const result = await chrome.runtime.sendMessage({ action: "readPlaybackTime", tabId: youtubeTabId, videoId: currentVideoId });
+  if (!result?.success) throw new Error(result?.error || "Cannot read playback time. Reopen the panel on your video.");
+  return result.currentTime;
 }
 
 async function followPlayback() {
@@ -2365,7 +2360,7 @@ function highlightActiveEntry(currentSeconds, force = false) {
   if (entries.length === 0) return;
 
   // Find the entry whose time range contains the current playback time
-  let activeEntry = null;
+  let activeEntry = currentSeconds < Number(entries[0].dataset.seconds) ? entries[0] : null;
   entries.forEach((entry, index) => {
     const entrySeconds = Number(entry.dataset.seconds);
     const nextEntry = entries[index + 1];
